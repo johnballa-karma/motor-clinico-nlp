@@ -5,3 +5,4 @@ transformers
 torch
 deep-translator==1.11.4
 pydantic==2.6.4
+pypdf==4.2.0
