@@ -7,3 +7,5 @@ deep-translator==1.11.4
 pydantic==2.6.4
 pypdf==4.2.0
 python-multipart
+spacy==3.7.4
+https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.7.0/es_core_news_sm-3.7.0-py3-none-any.whl
