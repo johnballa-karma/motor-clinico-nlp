@@ -1,3 +1,4 @@
+import os
 import time
 import re
 import logging
@@ -31,7 +32,7 @@ async def lifespan(app: FastAPI):
         recursos_ia["trad_es_en"] = GoogleTranslator(source='es', target='en')
         recursos_ia["trad_en_es"] = GoogleTranslator(source='en', target='es')
         
-        # Pipeline del Modelo Biomédico (Descarga diferida o mapeo en RAM)
+        # Pipeline del Modelo Biomédico (Optimizando uso de RAM en CPU)
         logger.info("Cargando modelo BioBERT (d4data/biomedical-ner-all) en RAM...")
         recursos_ia["biobert"] = pipeline("ner", model="d4data/biomedical-ner-all")
         
@@ -44,21 +45,21 @@ async def lifespan(app: FastAPI):
         logger.info("Liberando recursos de memoria RAM...")
         recursos_ia.clear()
 
-# --- INSTANCIA DE LA API CON METADATOS ACADÉMICOS ---
+# --- INSTANCIA DE LA API ---
 app = FastAPI(
     title="Clinical NLP & Heuristic Diagnostic Engine",
-    description="API de grado de producción para el procesamiento de lenguaje natural biomédico y extracción de entidades.",
-    version="1.0.0",
-    contact={
-        "name": "Departamento de Ingeniería de Sistemas",
-        "email": "soporte@clinicalnlp.edu"
-    },
+    description="API de grado de producción optimizada para Railway Hobby Tier.",
+    version="1.1.0",
     lifespan=lifespan
 )
 
+# Configuración Dinámica de CORS
+cors_env = os.getenv("CORS_ORIGINS", "*")
+origins = [cors_env] if cors_env != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -74,44 +75,36 @@ DICCIONARIO_ETIQUETAS = {
     "History": "Historial Médico"
 }
 
-# --- CONTROLADORES DE MODELOS PYDANTIC (DATA SCHEMAS) ---
+# --- CONTROLADORES DE MODELOS PYDANTIC ---
 class NotaClinicaIn(BaseModel):
-    texto_clinico: str = Field(
-        ..., 
-        min_length=10, 
-        max_length=2000,
-        description="Texto libre de la anamnesis o evolución médica del paciente.",
-        example="Paciente de 55 años con presión arterial de 145/95 mmHg y frecuencia cardíaca de 112 lpm."
-    )
+    texto_clinico: str = Field(..., min_length=10, max_length=2000)
 
 class EntidadClinica(BaseModel):
-    palabra: str = Field(..., description="Término o concepto médico extraído.")
-    etiqueta: str = Field(..., description="Categoría asignada por la ontología médica.")
-    certeza: float = Field(..., description="Nivel de confianza estadística del modelo (0.0 a 1.0).")
+    palabra: str
+    etiqueta: str
+    certeza: float
 
 class TelemetriaMeta(BaseModel):
-    tiempo_traduccion_ms: float = Field(..., description="Tiempo consumido en normalización lingüística.")
-    tiempo_inferencia_ms: float = Field(..., description="Tiempo de cómputo en la red neuronal BioBERT.")
-    tiempo_heuristica_ms: float = Field(..., description="Tiempo de evaluación del motor de reglas cuantitativas.")
-    tiempo_total_ms: float = Field(..., description="Latencia de procesamiento extremo a extremo.")
+    tiempo_traduccion_ms: float
+    tiempo_inferencia_ms: float
+    tiempo_heuristica_ms: float
+    tiempo_total_ms: float
 
 class AnalisisClinicoOut(BaseModel):
-    estado: str = Field("exito", description="Estado operativo de la solicitud.")
-    alertas: List[str] = Field(..., description="Alertas predictivas disparadas por el motor de reglas.")
-    entidades: List[EntidadClinica] = Field(..., description="Lista ordenada de entidades biomédicas.")
-    meta: TelemetriaMeta = Field(..., description="Métricas de rendimiento e ingeniería de la petición.")
+    estado: str = "exito"
+    alertas: List[str] = []
+    entidades: List[EntidadClinica] = []
+    meta: TelemetriaMeta
 
 
-# --- MOTOR DE REGLAS HEURÍSTICAS AVANZADO ---
+# --- MOTOR DE REGLAS HEURÍSTICAS ---
 class ClinicalRuleEngine:
-    """Clase encargada del análisis y cribado de signos vitales cuantitativos."""
-    
     @staticmethod
     def evaluar_signos_vitales(texto: str) -> List[str]:
         alertas = []
         fmt_texto = texto.lower()
 
-        # Patrón A: Saturación de Oxígeno (SpO2) -> Tolera espacios y variaciones de unidades
+        # Patrón A: Saturación de Oxígeno (SpO2)
         sat_match = re.search(r'(saturaci[óo]n|sat|o2|ox[ií]geno)\s*(de|del)?\s*(\d{2})\s*%?', fmt_texto)
         if sat_match:
             valor = int(sat_match.group(3))
@@ -123,7 +116,7 @@ class ClinicalRuleEngine:
         if fc_match:
             valor = int(fc_match.group(1))
             if valor > 100:
-                alertas.append(f"⚠️ Alerta de Taquicardia ({valor} lpm): Ritmo cardíaco acelerado detectado de forma cuantitativa.")
+                alertas.append(f"⚠️ Alerta de Taquicardia ({valor} lpm): Ritmo cardíaco acelerado detectado.")
             elif valor < 60:
                 alertas.append(f"⚠️ Alerta de Bradicardia ({valor} lpm): Ritmo cardíaco inferior a los rangos normales.")
 
@@ -140,12 +133,12 @@ class ClinicalRuleEngine:
             sistolica = int(pa_match.group(1))
             diastolica = int(pa_match.group(2))
             if sistolica > 140 or diastolica > 90:
-                alertas.append(f"⚠️ Riesgo Cardiovascular ({sistolica}/{diastolica} mmHg): Valores sugerentes de Crisis o Urgencia Hipertensiva.")
+                alertas.append(f"⚠️ Riesgo Cardiovascular ({sistolica}/{diastolica} mmHg): Valores sugerentes de Crisis Hipertensiva.")
 
         return alertas
 
 
-# --- ALGORITMO DE RECONSTRUCCIÓN DE TOKENS BIO (MÁQUINA DE ESTADOS) ---
+# --- ALGORITMO DE RECONSTRUCCIÓN DE TOKENS ---
 def reconstruir_tokens_biomedicos(resultados_crudos) -> List[dict]:
     entidades = []
     actual = None
@@ -176,59 +169,67 @@ def reconstruir_tokens_biomedicos(resultados_crudos) -> List[dict]:
 
 
 # --- ROUTER DE INFERENCIA EN LÍNEA ---
-@app.post(
-    "/api/v1/analizar-texto", 
-    response_model=AnalisisClinicoOut,
-    status_code=status.HTTP_200_OK,
-    summary="Procesa notas de evolución clínica.",
-    response_description="JSON estructurado con entidades detectadas, alertas de riesgo y metadata de rendimiento."
-)
+@app.post("/api/v1/analizar-texto", response_model=AnalisisClinicoOut)
 async def analizar_texto_clinico(solicitud: NotaClinicaIn):
     if not recursos_ia:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
-            detail="Los motores de inferencia no se inicializaron en el arranque del servidor."
+            detail="Motores de inferencia no inicializados."
         )
     
     t_inicio = time.perf_counter()
     
     try:
-        # 1. Motor Heurístico (Operación nativa en CPU sin bloqueo)
+        # 1. Motor Heurístico
         t_h_inicio = time.perf_counter()
         alertas_detectadas = ClinicalRuleEngine.evaluar_signos_vitales(solicitud.texto_clinico)
         t_h_fin = time.perf_counter()
         
-        # 2. Traducción Es -> En (Envoltura en Threadpool para evitar bloqueo del Event Loop)
+        # 2. Traducción Es -> En
         t_t_inicio = time.perf_counter()
         texto_en = await run_in_threadpool(recursos_ia["trad_es_en"].translate, solicitud.texto_clinico)
         t_t_fin = time.perf_counter()
         
-        # 3. Cómputo del Transformer Neuronal
+        # 3. Inferencia de Red Neuronal BioBERT
         t_i_inicio = time.perf_counter()
         resultados_crudos = recursos_ia["biobert"](texto_en)
         entidades_ensambladas = reconstruir_tokens_biomedicos(resultados_crudos)
         t_i_fin = time.perf_counter()
         
-        # 4. Traducción de Retorno y Filtrado Estadístico
+        # --- OPTIMIZACIÓN REAL: TRADUCCIÓN EN LOTE (BATCH) ---
+        t_t_back_inicio = time.perf_counter()
+        
+        # Aislamos los términos que cumplen con el filtro estadístico
+        filtradas = [e for e in entidades_ensambladas if e['certeza'] >= 0.45 and e['etiqueta'] != "O"]
+        palabras_en = [e['palabra'] for e in filtradas]
+        
+        palabras_es = []
+        if palabras_en:
+            # Hacemos una única petición masiva por internet para todo el lote de palabras
+            palabras_es = await run_in_threadpool(recursos_ia["trad_en_es"].translate_batch, palabras_en)
+        
+        # Reconstruimos la respuesta final mapeando los índices
         entidades_finales = []
-        for ent in entidades_ensambladas:
-            if ent['certeza'] >= 0.45 and ent['etiqueta'] != "O":
-                palabra_es = await run_in_threadpool(recursos_ia["trad_en_es"].translate, ent['palabra'])
-                etiqueta_es = DICCIONARIO_ETIQUETAS.get(ent['etiqueta'], ent['etiqueta'])
-                
-                entidades_finales.append(
-                    EntidadClinica(
-                        palabra=palabra_es,
-                        etiqueta=etiqueta_es,
-                        certeza=round(ent['certeza'], 4)
-                    )
+        for i, ent in enumerate(filtradas):
+            palabra_traducida = palabras_es[i] if i < len(palabras_es) else ent['palabra']
+            etiqueta_es = DICCIONARIO_ETIQUETAS.get(ent['etiqueta'], ent['etiqueta'])
+            
+            entidades_finales.append(
+                EntidadClinica(
+                    palabra=palabra_traducida,
+                    etiqueta=etiqueta_es,
+                    certeza=round(ent['certeza'], 4)
                 )
-                
+            )
+        t_t_back_fin = time.perf_counter()
+        
         t_final = time.perf_counter()
         
-        # Construcción detallada del objeto de métricas
+        # Sumamos los tiempos de traducción de entrada y de salida masiva
+        tiempo_traduccion_total = ((t_t_fin - t_t_inicio) + (t_t_back_fin - t_t_back_inicio)) * 1000
+        
         meta_rendimiento = TelemetriaMeta(
-            tiempo_traduccion_ms=round((t_t_fin - t_t_inicio) * 1000, 2),
+            tiempo_traduccion_ms=round(tiempo_traduccion_total, 2),
             tiempo_inferencia_ms=round((t_i_fin - t_i_inicio) * 1000, 2),
             tiempo_heuristica_ms=round((t_h_fin - t_h_inicio) * 1000, 2),
             tiempo_total_ms=round((t_final - t_inicio) * 1000, 2)
@@ -242,11 +243,13 @@ async def analizar_texto_clinico(solicitud: NotaClinicaIn):
         )
         
     except Exception as e:
-        logger.error(f"Fallo en la tubería de ejecución del pipeline: {e}")
+        logger.error(f"Fallo en la ejecución del pipeline: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
             detail="Error crítico interno procesando la solicitud biomédica."
         )
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    puerto = int(os.getenv("PORT", 8000))
+    es_produccion = os.getenv("ENV", "development") == "production"
+    uvicorn.run("main:app", host="0.0.0.0", port=puerto, reload=not es_produccion)
