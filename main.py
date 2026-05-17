@@ -51,9 +51,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Clinical NLP & Heuristic Diagnostic Engine",
     description="API de grado de producción para el procesamiento de lenguaje natural biomédico y extracción de entidades.",
-    version="1.2.0",
+    version="1.2.5",
     contact={
-        "name": "Departamento de Ingeniería de Sistemas",
+        "name": "John Balla - Ingeniería de Software y Sistemas Biomédicos",
         "email": "soporte@clinicalnlp.edu"
     },
     lifespan=lifespan
@@ -81,12 +81,12 @@ DICCIONARIO_ETIQUETAS = {
     "History": "Historial Médico"
 }
 
-# --- ENTIENTIDADES TIPO (SCHEMAS PYDANTIC) ---
+# --- ENTIDADES TIPO (SCHEMAS PYDANTIC) ---
 class NotaClinicaIn(BaseModel):
     texto_clinico: str = Field(
         ..., 
         min_length=10, 
-        max_length=2000,
+        max_length=100000,  # Expandido a 100k para procesar PDFs clínicos masivos de forma robusta
         description="Texto libre de la anamnesis o evolución médica del paciente."
     )
 
@@ -308,9 +308,10 @@ async def analizar_pdf_clinico(archivo: UploadFile = File(...)):
         raise http_err
     except Exception as e:
         logger.error(f"Fallo crítico parseando el documento PDF: {e}")
+        # Exposición explícita de la excepción para depuración transparente en la consola de Swagger
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error interno al parsear la estructura de flujo del PDF."
+            detail=f"Error en el backend: {str(e)}"
         )
 
 
@@ -319,6 +320,7 @@ if __name__ == "__main__":
     puerto = int(os.getenv("PORT", 8000))
     es_produccion = os.getenv("ENV", "development") == "production"
     
+    import uvicorn
     uvicorn.run(
         "main:app", 
         host="0.0.0.0", 
