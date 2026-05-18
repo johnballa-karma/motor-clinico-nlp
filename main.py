@@ -51,8 +51,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Clinical NLP & Heuristic Diagnostic Engine",
-    description="API de grado de producción para el procesamiento de lenguaje natural biomédico.",
-    version="1.4.0",
+    description="API de grado de producción para el procesamiento de lenguaje natural biomédico con confirmación de estabilidad.",
+    version="1.5.0",
     lifespan=lifespan
 )
 
@@ -97,58 +97,77 @@ class AnalisisClinicoOut(BaseModel):
     meta: TelemetriaMeta
 
 
-# --- ARQUITECTURA ESCALABLE DE BIOMARCADORES ---
-# Si necesitas agregar nuevas enfermedades derivadas de números (ej. creatinina -> Falla Renal), solo agregas un bloque aquí.
+# --- ARQUITECTURA ESCALABLE DE BIOMARCADORES (RIESGO Y ESTABILIDAD) ---
 REGLAS_CLINICAS_CUANTITATIVAS = [
     {
         "id": "oxigeno",
         "lemmas": ["saturación", "saturar", "sat", "o2", "oxígeno"],
         "min_valid": 50.0, "max_valid": 100.0,
-        "evaluaciones": [
+        "evaluaciones_riesgo": [
             (lambda v: v < 90.0, "⚠️ Hipoxia Severa ({val}%): Riesgo clínico alto. Evaluar soporte ventilatorio.")
+        ],
+        "evaluaciones_normales": [
+            (lambda v: 90.0 <= v <= 100.0, "✅ SpO2 Estable ({val}%): Saturación de oxígeno dentro de parámetros normales. Mantener vigilancia estándar.")
         ]
     },
     {
         "id": "frecuencia_cardiaca",
         "lemmas": ["frecuencia", "latido", "pulso", "lpm", "fc", "cardíaco", "cardiaca"],
         "min_valid": 30.0, "max_valid": 250.0,
-        "evaluaciones": [
+        "evaluaciones_riesgo": [
             (lambda v: v > 100.0, "⚠️ Taquicardia ({val} lpm): Ritmo cardíaco acelerado detectado."),
             (lambda v: v < 60.0, "⚠️ Bradicardia ({val} lpm): Ritmo cardíaco inferior a los rangos normales.")
+        ],
+        "evaluaciones_normales": [
+            (lambda v: 60.0 <= v <= 100.0, "✅ Ritmo Cardíaco Sinusal ({val} lpm): Frecuencia cardíaca en rangos fisiológicos óptimos.")
         ]
     },
     {
         "id": "temperatura",
         "lemmas": ["temperatura", "fiebre", "temp", "°"],
         "min_valid": 35.0, "max_valid": 43.0,
-        "evaluaciones": [
-            (lambda v: v >= 38.0, "⚠️ Síndrome Febril ({val} °C): Proceso pirético activo.")
+        "evaluaciones_riesgo": [
+            (lambda v: v >= 38.0, "⚠️ Síndrome Febril ({val} °C): Proceso pirético activo. Evaluar focos infecciosos."),
+            (lambda v: v < 36.0, "⚠️ Hipotermia ({val} °C): Temperatura corporal anormalmente baja.")
+        ],
+        "evaluaciones_normales": [
+            (lambda v: 36.0 <= v < 38.0, "✅ Temperatura Normotérmica ({val} °C): Paciente afebril.")
         ]
     },
     {
         "id": "glucosa",
         "lemmas": ["glucosa", "glicemia", "azúcar", "mg/dl"],
         "min_valid": 20.0, "max_valid": 1000.0,
-        "evaluaciones": [
-            (lambda v: v > 125.0, "⚠️ Hiperglucemia ({val}): Niveles sugerentes de Diabetes Mellitus o descompensación."),
-            (lambda v: v < 70.0, "⚠️ Hipoglucemia ({val}): Riesgo neurológico agudo.")
+        "evaluaciones_riesgo": [
+            (lambda v: v > 125.0, "⚠️ Hiperglucemia ({val} mg/dl): Niveles sugerentes de descompensación metabólica."),
+            (lambda v: v < 70.0, "⚠️ Hipoglucemia ({val} mg/dl): Riesgo neurológico agudo.")
+        ],
+        "evaluaciones_normales": [
+            (lambda v: 70.0 <= v <= 100.0, "✅ Glucemia Óptima ({val} mg/dl): Metabolismo de carbohidratos controlado. Mantener dieta saludable."),
+            (lambda v: 100.0 < v <= 125.0, "ℹ️ Glucemia Limítrofe/Prediabetes ({val} mg/dl): Se sugiere control dietético restrictivo en azúcares refinados.")
         ]
     },
     {
         "id": "hemoglobina",
         "lemmas": ["hemoglobina", "hb"],
         "min_valid": 3.0, "max_valid": 25.0,
-        "evaluaciones": [
-            (lambda v: v < 12.0, "⚠️ Sospecha de Anemia ({val} g/dL): Disminución de la masa eritrocitaria detectada.")
+        "evaluaciones_riesgo": [
+            (lambda v: v < 12.0, "⚠️ Sospecha de Anemia ({val} g/dL): Disminución de masa eritrocitaria.")
+        ],
+        "evaluaciones_normales": [
+            (lambda v: 12.0 <= v <= 17.5, "✅ Hemoglobina Normal ({val} g/dL): Niveles eritrocitarios estables.")
         ]
     },
     {
         "id": "frecuencia_respiratoria",
         "lemmas": ["respiración", "respiratoria", "rpm", "fr"],
         "min_valid": 5.0, "max_valid": 60.0,
-        "evaluaciones": [
+        "evaluaciones_riesgo": [
             (lambda v: v > 20.0, "⚠️ Taquipnea ({val} rpm): Frecuencia respiratoria elevada."),
             (lambda v: v < 12.0, "⚠️ Bradipnea ({val} rpm): Depresión respiratoria detectada.")
+        ],
+        "evaluaciones_normales": [
+            (lambda v: 12.0 <= v <= 20.0, "✅ Patrón Eupneico ({val} rpm): Frecuencia respiratoria sin alteraciones.")
         ]
     }
 ]
@@ -164,7 +183,7 @@ class ClinicalRuleEngine:
         doc = nlp(texto.lower())
         matcher = Matcher(nlp.vocab)
 
-        # 1. Patrón Complejo: Presión Arterial (Se mantiene aislado por su sintaxis doble)
+        # 1. Análisis Dinámico de Presión Arterial (Riesgo, Limítrofe y Óptimo)
         patron_pa = [
             {"IS_DIGIT": True},
             {"LOWER": {"IN": ["/", "sobre", "con", "de", "-"]}, "OP": "?"},
@@ -180,27 +199,41 @@ class ClinicalRuleEngine:
                 sistolica, diastolica = numeros[0], numeros[1]
                 if 50 <= sistolica <= 250 and 30 <= diastolica <= 150:
                     if sistolica > 140 or diastolica > 90:
-                        alertas.append(f"⚠️ Riesgo Cardiovascular ({sistolica}/{diastolica} mmHg): Valores sugerentes de Crisis Hipertensiva.")
+                        alertas.append(f"⚠️ Riesgo Cardiovascular ({sistolica}/{diastolica} mmHg): Valores sugerentes de Crisis Hipertensiva. Requiere intervención farmacológica.")
+                    elif 120 <= sistolica <= 140 or 80 <= diastolica <= 90:
+                        alertas.append(f"ℹ️ Presión Arterial Limítrofe ({sistolica}/{diastolica} mmHg): Prehipertensión. Se aconseja reducción de ingesta de sodio y actividad física regular.")
+                    else:
+                        alertas.append(f"✅ Presión Arterial Óptima ({sistolica}/{diastolica} mmHg): Dinámica cardiovascular normotensa. Mantener estilo de vida actual.")
 
-        # 2. Análisis Semántico Escalable (Lee el diccionario dinámicamente)
+        # 2. Análisis Semántico Escalable del Diccionario
         for token in doc:
             for regla in REGLAS_CLINICAS_CUANTITATIVAS:
                 if token.lemma_ in regla["lemmas"]:
-                    # Abrimos una ventana de búsqueda de 2 palabras antes y 4 después del término médico
                     ventana = doc[max(0, token.i - 2) : min(len(doc), token.i + 4)]
                     for t in ventana:
                         if t.is_digit or (t.like_num and ("." in t.text or "," in t.text)):
                             try:
                                 val = float(t.text.replace(",", "."))
-                                # Si el número tiene coherencia fisiológica para esa prueba médica
                                 if regla["min_valid"] <= val <= regla["max_valid"]:
-                                    for condicion, mensaje in regla["evaluaciones"]:
+                                    alerta_generada = False
+                                    
+                                    # Primero evaluamos si existe algún riesgo crítico
+                                    for condicion, mensaje in regla.get("evaluaciones_riesgo", []):
                                         if condicion(val):
                                             alertas.append(mensaje.format(val=val))
-                                            break # Rompe el ciclo para no repetir la alerta del mismo número
+                                            alerta_generada = True
+                                            break 
+                                    
+                                    # Si no hay riesgo, evaluamos si entra en el espectro de normalidad/prevención
+                                    if not alerta_generada:
+                                        for condicion, mensaje in regla.get("evaluaciones_normales", []):
+                                            if condicion(val):
+                                                alertas.append(mensaje.format(val=val))
+                                                break
                             except ValueError:
                                 continue
 
+        # Elimina duplicados manteniendo el orden
         return list(dict.fromkeys(alertas))
 
 
@@ -302,6 +335,7 @@ async def analizar_pdf_clinico(archivo: UploadFile = File(...)):
         raise http_err
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el backend: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn
